@@ -272,7 +272,7 @@ class LocalMicrosoftService:
     def get_snapshot_ids(self, mailbox: dict, target_email: str) -> set:
         snapshot = set()
         tgt = target_email.lower().strip()
-        from utils.email_providers.mail_service import mask_email
+        from utils.email_providers.mail_service import _is_local_ms_target_hit, mask_email
         print(f"[{cfg.ts()}] [INFO] 🛰️ 正在为目标 {mask_email(tgt)} 执行历史邮件封存...")
 
         try:
@@ -282,9 +282,9 @@ class LocalMicrosoftService:
             if current_type == 'graph_full':
                 url = f"{self.graph_base_url}/messages"
                 params = {
-                    "$select": "id,toRecipients,subject",
+                    "$select": "id,toRecipients,subject,body",
                     "$filter": "contains(from/emailAddress/address, 'openai.com')",
-                    "$top": 15
+                    "$top": 20
                 }
                 headers = {"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"}
 
@@ -294,8 +294,7 @@ class LocalMicrosoftService:
                 if resp.status_code == 200:
                     raw_value = resp.json().get("value", [])
                     for m in raw_value:
-                        recs = [r.get('emailAddress', {}).get('address', '').lower() for r in m.get('toRecipients', [])]
-                        if tgt in recs:
+                        if _is_local_ms_target_hit(m, tgt):
                             snapshot.add(m.get('id'))
                 else:
                     current_type = 'outlook_legacy'
@@ -304,8 +303,7 @@ class LocalMicrosoftService:
                 messages = self._fetch_via_imap(mailbox, headers_only=True)
 
                 for m in messages:
-                    recs = [r.get('emailAddress', {}).get('address', '').lower() for r in m.get('toRecipients', [])]
-                    if tgt in recs:
+                    if _is_local_ms_target_hit(m, tgt):
                         snapshot.add(m.get('id'))
 
         except Exception as e:

@@ -645,6 +645,29 @@ def _extract_otp_code(content: str) -> str:
     return fallback.group(1) if fallback else ""
 
 
+def _is_local_ms_target_hit(message: dict, target_email: str) -> bool:
+    tgt = str(target_email or "").lower().strip()
+    if not tgt:
+        return False
+
+    recipients = [
+        str(recipient.get("emailAddress", {}).get("address", "")).lower().strip()
+        for recipient in message.get("toRecipients", [])
+    ]
+    body = message.get("body", {})
+    if isinstance(body, dict):
+        body_content = str(body.get("content", "") or "")
+    else:
+        body_content = str(body or "")
+    body_lower = body_content.lower()
+
+    return (
+        tgt in recipients
+        or f"to: {tgt}" in body_lower
+        or tgt in body_lower
+    )
+
+
 def _create_imap_conn(proxy_str=None):
     """使用原生方式建立 IMAP 连接 (支持局部代理)"""
     if proxy_str:
@@ -663,6 +686,8 @@ def _poll_local_ms_for_oai_code_graph(ms_service, target_email: str, mailbox_dic
     for attempt in range(max_attempts):
         if getattr(cfg, 'GLOBAL_STOP', False): return ""
         messages = ms_service.fetch_openai_messages(mailbox_dict)
+        if mailbox_dict.get("_polling_stopped") == "abuse_mode":
+            return ""
 
         if messages:
             for msg in messages:
@@ -673,14 +698,10 @@ def _poll_local_ms_for_oai_code_graph(ms_service, target_email: str, mailbox_dic
                 sender = str(msg.get('from', {}).get('emailAddress', {}).get('address', '')).lower()
                 if "openai.com" not in sender:
                     continue
-                recipients = [str(r.get('emailAddress', {}).get('address', '')).lower().strip()
-                              for r in msg.get('toRecipients', [])]
                 body_content = msg.get('body', {}).get('content', '')
                 subject = msg.get('subject', '').lower()
 
-                is_hit = (tgt in recipients) or (f"to: {tgt}" in body_content.lower()) or (tgt in body_content.lower())
-
-                if is_hit:
+                if _is_local_ms_target_hit(msg, tgt):
                     code = _extract_otp_code(f"{subject}\n{body_content}")
                     if code:
                         print(f"\n[{cfg.ts()}] [SUCCESS] 🎯 捕获专属验证码: {code} -> {mask_email(tgt)}", flush=True)
